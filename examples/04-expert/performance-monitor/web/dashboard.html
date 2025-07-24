@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Performance Monitor Dashboard</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .dashboard {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .card h3 {
+        margin-top: 0;
+        color: #333;
+      }
+      .metric {
+        display: flex;
+        justify-content: space-between;
+        margin: 10px 0;
+        padding: 5px 0;
+        border-bottom: 1px solid #eee;
+      }
+      .value {
+        font-weight: bold;
+        color: #2196f3;
+      }
+      .chart-container {
+        height: 200px;
+        margin: 20px 0;
+      }
+      .status {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+      }
+      .connected {
+        background-color: #4caf50;
+        color: white;
+      }
+      .disconnected {
+        background-color: #f44336;
+        color: white;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>System Performance Monitor</h1>
+        <div>Status: <span id="status" class="status disconnected">Disconnected</span></div>
+        <div>Last Update: <span id="lastUpdate">Never</span></div>
+      </div>
+
+      <div class="dashboard">
+        <div class="card">
+          <h3>CPU Usage</h3>
+          <div id="cpuMetrics"></div>
+          <canvas id="cpuChart" class="chart-container"></canvas>
+        </div>
+
+        <div class="card">
+          <h3>Memory Usage</h3>
+          <div id="memoryMetrics"></div>
+          <canvas id="memoryChart" class="chart-container"></canvas>
+        </div>
+
+        <div class="card">
+          <h3>Disk Usage</h3>
+          <div id="diskMetrics"></div>
+        </div>
+
+        <div class="card">
+          <h3>Network Statistics</h3>
+          <div id="networkMetrics"></div>
+        </div>
+
+        <div class="card">
+          <h3>Top Processes</h3>
+          <div id="processMetrics"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let ws = null;
+      let cpuChart = null;
+      let memoryChart = null;
+
+      function connect() {
+        ws = new WebSocket('ws://localhost:8080/ws');
+
+        ws.onopen = function () {
+          document.getElementById('status').textContent = 'Connected';
+          document.getElementById('status').className = 'status connected';
+        };
+
+        ws.onmessage = function (event) {
+          const data = JSON.parse(event.data);
+          updateDashboard(data);
+          document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        };
+
+        ws.onclose = function () {
+          document.getElementById('status').textContent = 'Disconnected';
+          document.getElementById('status').className = 'status disconnected';
+          setTimeout(connect, 5000);
+        };
+
+        ws.onerror = function (error) {
+          console.error('WebSocket error:', error);
+        };
+      }
+
+      function updateDashboard(data) {
+        updateCPU(data.cpu);
+        updateMemory(data.memory);
+        updateDisk(data.disk);
+        updateNetwork(data.network);
+        updateProcesses(data.processes);
+      }
+
+      function updateCPU(cpuData) {
+        const container = document.getElementById('cpuMetrics');
+        container.innerHTML = '';
+
+        cpuData.forEach((usage, index) => {
+          const metric = document.createElement('div');
+          metric.className = 'metric';
+          metric.innerHTML = `<span>CPU ${index}</span><span class="value">${usage.toFixed(2)}%</span>`;
+          container.appendChild(metric);
+        });
+
+        if (!cpuChart) {
+          const ctx = document.getElementById('cpuChart').getContext('2d');
+          cpuChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: cpuData.map((_, i) => `CPU ${i}`),
+              datasets: [
+                {
+                  label: 'CPU Usage %',
+                  data: cpuData,
+                  borderColor: '#2196F3',
+                  backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                  tension: 0.4,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: { y: { beginAtZero: true, max: 100 } },
+            },
+          });
+        } else {
+          cpuChart.data.datasets[0].data = cpuData;
+          cpuChart.update();
+        }
+      }
+
+      function updateMemory(memData) {
+        const container = document.getElementById('memoryMetrics');
+        container.innerHTML = `
+                <div class="metric">
+                    <span>Total</span>
+                    <span class="value">${formatBytes(memData.total)}</span>
+                </div>
+                <div class="metric">
+                    <span>Used</span>
+                    <span class="value">${formatBytes(memData.used)} (${memData.used_percent.toFixed(2)}%)</span>
+                </div>
+                <div class="metric">
+                    <span>Available</span>
+                    <span class="value">${formatBytes(memData.available)}</span>
+                </div>
+            `;
+      }
+
+      function updateDisk(diskData) {
+        const container = document.getElementById('diskMetrics');
+        container.innerHTML = '';
+
+        diskData.forEach((disk) => {
+          const metric = document.createElement('div');
+          metric.className = 'metric';
+          metric.innerHTML = `
+                    <span>${disk.device}</span>
+                    <span class="value">${formatBytes(disk.used)} / ${formatBytes(disk.total)} (${disk.used_percent.toFixed(2)}%)</span>
+                `;
+          container.appendChild(metric);
+        });
+      }
+
+      function updateNetwork(netData) {
+        const container = document.getElementById('networkMetrics');
+        container.innerHTML = `
+                <div class="metric">
+                    <span>Bytes Sent</span>
+                    <span class="value">${formatBytes(netData.bytes_sent)}</span>
+                </div>
+                <div class="metric">
+                    <span>Bytes Received</span>
+                    <span class="value">${formatBytes(netData.bytes_recv)}</span>
+                </div>
+                <div class="metric">
+                    <span>Packets Sent</span>
+                    <span class="value">${netData.packets_sent.toLocaleString()}</span>
+                </div>
+                <div class="metric">
+                    <span>Packets Received</span>
+                    <span class="value">${netData.packets_recv.toLocaleString()}</span>
+                </div>
+            `;
+      }
+
+      function updateProcesses(procData) {
+        const container = document.getElementById('processMetrics');
+        container.innerHTML = '';
+
+        procData.slice(0, 5).forEach((proc) => {
+          const metric = document.createElement('div');
+          metric.className = 'metric';
+          metric.innerHTML = `
+                    <span>${proc.name} (${proc.pid})</span>
+                    <span class="value">CPU: ${proc.cpu_percent.toFixed(2)}% | RAM: ${proc.memory_mb.toFixed(1)}MB</span>
+                `;
+          container.appendChild(metric);
+        });
+      }
+
+      function formatBytes(bytes) {
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        if (bytes === 0) return '0 B';
+        const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+        return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + ' ' + sizes[i];
+      }
+
+      connect();
+    </script>
+  </body>
+</html>
